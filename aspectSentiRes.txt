@@ -1,0 +1,38 @@
+phone 
+
+Sentence Level
+336,138,
+170,231,
+Sentence level F1 measure:pros:0.6857142857142856, cons:0.6
+perplexity:NaN
+Likelihood:-217046.7644690518
+Cannot predict:
+
+
+camera
+Sentence Level
+807,180,
+312,301,
+Sentence level F1 measure:pros:0.7663817663817665, cons:0.5502742230347348
+perplexity:1232.4980870905874
+Likelihood:-407916.9991819459
+Cannot predict:187
+
+tv
+cons_precision_sentence:0.6910755148741419 cons_recall_sentence:0.5774378585086042
+Sentence Level
+489,135,
+221,302,
+Sentence level F1 measure:pros:0.7331334332833583, cons:0.6291666666666667
+perplexity:1080.1221110459771
+Likelihood:-390912.3660392258
+Cannot predict:222
+
+tablet
+Sentence Level
+1010,305,
+481,787,
+Sentence level F1 measure:pros:0.7198859586600143, cons:0.666949152542373
+perplexity:NaN
+Likelihood:-304195.9059886902
+Cannot predict:128
