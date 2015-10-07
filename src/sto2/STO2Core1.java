@@ -8,14 +8,19 @@ package sto2;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.io.PrintWriter;
+import java.lang.reflect.Array;
 import java.util.ArrayList;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.Vector;
@@ -37,7 +42,8 @@ public class STO2Core1 {
 	private int numRealIterations;
 	private int numDocuments;
 	private List<String> wordList = null;
-	private int numProbWords = 100;
+	private int numProbWords = 200;
+	private boolean sentiAspectPrior = false;
 	
 	public String inputDir = null;
 	public String outputDir = null;
@@ -45,6 +51,8 @@ public class STO2Core1 {
 	
 	int mod;
 	private double alpha;
+	private double[][] word_topic_prior; /* prior distribution of words under a set of topics, by default it is null */
+	
 	private double sumAlpha;
 	private double [] betas;  // betas[3]: Common Words, Corresponding Lexicon, The Other Lexicons
 	private double [] sumBeta;  // sumBeta[senti]
@@ -71,10 +79,17 @@ public class STO2Core1 {
 	final private int maxSentenceLength = 50;
 	
 	public  PrintWriter infoWriter;
+	public  PrintWriter summaryWriter;
+	private  String wordIntrusionFilePath;
+	
+	public void setsentiAspectPrior(boolean flag){
+		sentiAspectPrior = flag;
+	}
 	
 	public void setInfoWriter(String filePath){
 		try{
 			infoWriter = new PrintWriter(new File(filePath));
+			
 			System.out.println("File Set");
 		}
 		catch(Exception e){
@@ -83,9 +98,117 @@ public class STO2Core1 {
 		}
 	}
 	
+	public void setSummaryWriter(String filePath){
+		try{
+			
+			summaryWriter = new PrintWriter(new File(filePath));
+			System.out.println("File Set");
+		}
+		catch(Exception e){
+			e.printStackTrace();
+			System.err.println("Summary file"+filePath+" Not Found");
+		}
+	}
+	
+	
+	public void setIntrusionWriter(String filePath){
+		this.wordIntrusionFilePath = filePath;
+	}
+	
+	
+	public void LoadPrior(String filename, int eta) {		
+		if (filename == null || filename.isEmpty())
+			return;
+		
+		try {
+			String tmpTxt;
+			String[] container;
+			
+			HashMap<String, Integer> featureNameIndex = new HashMap<String, Integer>();
+			for(int i=0; i<wordList.size(); i++)
+				featureNameIndex.put(wordList.get(i), featureNameIndex.size());
+			
+			int wid, wCount = 0;
+			
+			double[] prior;
+			ArrayList<double[]> priorWords = new ArrayList<double[]>();
+			BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(filename), "UTF-8"));
+			while( (tmpTxt=reader.readLine()) != null ){
+				tmpTxt = tmpTxt.trim();
+				if (tmpTxt.isEmpty())
+					continue;
+				
+				System.out.println("Prior loaded:" + tmpTxt);
+				int uniGramCount = 0; 
+				int biGramCount = 0;
+				container = tmpTxt.split(" ");
+				wCount = 0;
+				prior = new double[wordList.size()];
+				for(int i=1; i<container.length; i++) {
+					//here for checking we have added the stemming
+					// but stemming is reducing the number of prior loaded
+					// so we turn off the loading of stemming
+					//container[i] = SnowballStemming(container[i]); // stemmer added
+					if (featureNameIndex.containsKey(container[i])) {
+						wid = featureNameIndex.get(container[i]); // map it to a controlled vocabulary term
+						prior[wid] = eta;
+						wCount++;
+						if(container[i].contains("-"))
+							biGramCount++;
+						else
+							uniGramCount++;
+					}
+					
+				}
+				System.out.format("Prior keywords for Topic %d (%s): %d/%d\n", priorWords.size(), container[0], wCount, container.length-1);
+				System.out.println("Unigram loaded:"+uniGramCount +", Bigram loaded:"+biGramCount);
+				priorWords.add(prior);
+			}
+			reader.close();
+			
+			word_topic_prior = priorWords.toArray(new double[priorWords.size()][]);
+			
+			/*if (m_sentiAspectPrior && word_topic_prior.length%2==1) {
+				System.err.format("The topic size (%d) specified in the sentiment-aspect seed words is not even!", word_topic_prior.length);
+				System.exit(-1);
+			} else if (word_topic_prior.length > number_of_topics) {
+				System.err.format("More topics specified in seed words (%d) than topic model's configuration(%d)!\n", word_topic_prior.length, number_of_topics);
+				System.err.format("Reset the topic size to %d!\n", word_topic_prior.length);
+				
+				this.number_of_topics = word_topic_prior.length;
+				createSpace();
+			}
+			*/
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	
+	protected void imposePrior() {		
+		if (word_topic_prior!=null) {//we have enforced that the topic size is at least as many as prior seed words
+			
+			int s = 0;
+			for(int k=0; k<numTopics; k++) {
+				for(int n=0; n<wordList.size(); n++) {
+					matrixSWT[s].setValue(n, k, (int)word_topic_prior[k][n]);
+				}
+			}
+			
+			s = 1;
+			for(int k=numTopics; k<2*numTopics; k++) {
+				for(int n=0; n<wordList.size(); n++) {
+					matrixSWT[s].setValue(n, k-numTopics, (int)word_topic_prior[k][n]);
+				}
+			}
+
+		}
+	}
+	
+	
 	public static void main(String [] args) throws Exception {
 		
-		int numIterations = 50;
+		int numIterations = 500;
 		int numSenti = 2;
 		int numThreads = 1;
 		
@@ -95,6 +218,7 @@ public class STO2Core1 {
 		int trainSize = 5000;
 		boolean neweggload = true;
 		boolean loadSentiPrior = true;
+		boolean loadSentiAspectPrior = true;
 		
 		String inputDir = null;
 		String outputDir = null;
@@ -110,9 +234,15 @@ public class STO2Core1 {
 		}
 		String dicDir = "./data/input/";
 		String resultPath = outputDir+category+"_information.txt";
+		String summaryPath = outputDir+"ASUM_" +category+"_Topics_" + numTopics*2 + "_Summary.txt";
+		String wordIntrusionFilePath = outputDir+ "ASUM" +"_" +category+"_Topics_" + numTopics*2 + "_WordIntrusion.txt";
+		
+		String aspectSentiList = "./data/Model/aspect_"+ category + ".txt";
+		
 		
 		double alpha = 0.01;
 		double [] betas = new double[3];
+		int eta = 5;
 		betas[0] = 0.001;
 		betas[1] = 0.1;
 		
@@ -182,7 +312,14 @@ public class STO2Core1 {
 		System.out.println("Output Dir: "+outputDir);
 		
 		STO2Core1 core = new STO2Core1(numTopics, numSenti, wordList, documents, sentiWordsList, alpha, betas, gammas);
+		if(loadSentiAspectPrior){
+			System.out.println("Loading aspect-senti list from "+aspectSentiList);
+			core.setsentiAspectPrior(loadSentiAspectPrior);
+			core.LoadPrior(aspectSentiList, eta);
+		} 
 		core.setInfoWriter(resultPath);
+		core.setSummaryWriter(summaryPath);
+		core.setIntrusionWriter(wordIntrusionFilePath);
 		core.generateTmpOutputFiles(inputDir, outputDir, 1000);
 		core.initialization(randomInit);
 		core.gibbsSampling(numIterations, numThreads);
@@ -190,11 +327,11 @@ public class STO2Core1 {
 		core.sampleTestdoc();
 		
 		// most popular items under each category from Amazon
-		String tabletProductList[] = {"B008DWG5HE"};
-		String cameraProductList[] = {"B005IHAIMA"};
-		String phoneProductList[] = {"B00COYOAYW"};
-		String tvProductList[] = {"B0074FGLUM"};
-
+		String tabletProductList[] = {"B008DWG5HE","B00CYQPM42","B007P4YAPK"};
+		String cameraProductList[] = {"B005IHAIMA","B002IPHIEG","B00DMS0LCO"};
+		String phoneProductList[] = {"B00COYOAYW","B004T36GCU","B008HTJLF6"};
+		String tvProductList[] = {"B0074FGLUM","B00BCGROJG","B00AOA9BL0"};
+		
 		if(category.equalsIgnoreCase("camera"))
 			core.docSummary(cameraProductList);
 		else if(category.equalsIgnoreCase("tablet"))
@@ -234,6 +371,12 @@ public class STO2Core1 {
 		for (int i = 0; i < numSenti; i++)
 			matrixSDT[i] = new IntegerMatrix(numDocuments, numTopics);
 		matrixDS = new IntegerMatrix(numDocuments, numSenti);
+		
+		if(this.sentiAspectPrior==true){
+			System.out.println("Imposing Prior");
+			imposePrior();
+		}
+		
 		
 		int numTooLongSentences = 0;
 
@@ -661,9 +804,13 @@ public class STO2Core1 {
 	
 	
 	public void docSummary(String[] productList){
+		
+		
+		
+		
 		for(String prodID : productList) {
 			for(int i=0; i<this.numTopics; i++){
-				MyPriorityQueue<_RankItem> stnQueue = new MyPriorityQueue<_RankItem>(10);//top three sentences per topic per product
+				MyPriorityQueue<_RankItem> stnQueue = new MyPriorityQueue<_RankItem>(25);//top three sentences per topic per product
 				
 				for (OrderedDocument d : documents){
 					if(!d.isTestDoc()){
@@ -685,9 +832,12 @@ public class STO2Core1 {
 				}				
 				System.out.format("Product: %s, Topic: %d\n", prodID, i);
 				infoWriter.format("Product: %s, Topic: %d\n", prodID, i);
+				int senNumber = 0;
 				for(_RankItem it:stnQueue){
 					System.out.format("%s\t%.3f\n", it.m_name, it.m_value);	
-					infoWriter.format("%s\t%.3f\n", it.m_name, it.m_value);	
+					infoWriter.format("%s\t%.3f\n", it.m_name, it.m_value);
+					summaryWriter.format("%s,%d,%d,%s\n", prodID, i, senNumber, it.m_name);
+					senNumber++;
 				}			
 			}
 			
@@ -718,9 +868,12 @@ public class STO2Core1 {
 				}				
 				System.out.format("Product: %s, Topic: %d\n", prodID, i);
 				infoWriter.format("Product: %s, Topic: %d\n", prodID, i);
+				int senNumber=0;
 				for(_RankItem it:stnQueue){
 					System.out.format("%s\t%.3f\n", it.m_name, it.m_value);	
 					infoWriter.format("%s\t%.3f\n", it.m_name, it.m_value);	
+					summaryWriter.format("%s,%d,%d,%s\n", prodID, i+numTopics, senNumber, it.m_name);
+					senNumber++;
 				}			
 			}
 			
@@ -728,6 +881,9 @@ public class STO2Core1 {
 		}
 		infoWriter.flush();
 		infoWriter.close();
+		
+		summaryWriter.flush();
+		summaryWriter.close();
 	}
 
 	
@@ -1024,6 +1180,83 @@ public class STO2Core1 {
 		}
 		out.close();
 
+
+		// Intrusion words
+		HashMap<String, ArrayList<String>> list = new HashMap<String, ArrayList<String>>();
+		System.out.println("Writing the intrusion list words...");
+		out = new PrintWriter(new FileWriter(new File(this.wordIntrusionFilePath)));
+		for (int s = 0; s < this.numSenti; s++)
+			for (int t = 0; t < this.numTopics; t++)
+				out.print("S"+s+"-T"+t+",");
+		out.println();
+	
+		for (int w = 0; w < 5; w++) {
+			for (int s = 0; s < this.numSenti; s++) {
+				for (int t = 0; t < this.numTopics; t++) {
+					int index = wordIndices[s][t][w];
+					out.print(this.wordList.get(index)+",");
+					String tmp = ""+s+t;
+					if(list.containsKey(tmp)){
+						list.get(tmp).add(this.wordList.get(index));
+					}
+					else{
+						ArrayList<String> words = new ArrayList<String>();
+						words.add(this.wordList.get(index));
+						list.put(tmp, words);
+					}
+				}
+			}
+			out.println();
+		}
+		
+		// inter topic intrusion word index
+		Random r = new Random();
+		int w = 90 + r.nextInt(100);
+		for (int s = 0; s < this.numSenti; s++) {
+			for (int t = 0; t < this.numTopics; t++) {
+				int index = wordIndices[s][t][w];
+				out.print(this.wordList.get(index)+",");
+			}
+		}
+		out.println();
+		
+		// intra topic intrusion word index
+		
+		for (int s = 0; s < this.numSenti; s++) {
+			for (int t = 0; t < this.numTopics; t++) {
+				//select next topic
+				int nextTopic = (t + 1)%this.numTopics;
+				
+			
+				String key = ""+s+t;
+				ArrayList<String> words = list.get(key);
+				
+				
+				int wordIndex = 0;
+				int index = wordIndices[s][nextTopic][wordIndex];
+				
+				
+				while(true){
+					String word = this.wordList.get(index);
+					if(!words.contains(word)){
+						out.print(word+",");
+						break;
+					}
+					wordIndex++;
+					index = wordIndices[s][nextTopic][wordIndex];
+				
+				}
+				
+				
+			}
+		}
+		out.println();
+		
+		out.close();
+
+		
+		
+		
 		/*
 		// Result reviews
 		System.out.println("Visualizing reviews...");
